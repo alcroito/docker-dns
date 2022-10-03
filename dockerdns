@@ -88,7 +88,7 @@ class NameTable(object):
     'Table mapping names to addresses'
 
     def __init__(self, records):
-        self._storage = defaultdict(set)
+        self._storage = defaultdict(list)
         self._lock = threading.Lock()
         for rec in records:
             self.add(rec[0], rec[1])
@@ -103,14 +103,17 @@ class NameTable(object):
                     if addr and ip_address(addr) in network:
                         log('skipping table.add %s -> %s (blacklisted network)', name, addr)
                         return
+                if addr in self._storage[key]:
+                    log('skipping table.add %s -> %s (duplicate)', name, addr)
+                    return
                 log('table.add %s -> %s', name, addr)
-                self._storage[key].add(addr)
+                self._storage[key].append(addr)
 
                 # reverse map for PTR records
                 addr = '%s.in-addr.arpa' % '.'.join(reversed(addr.split('.')))
                 key = self._key(addr)
                 log('table.add %s -> %s', addr, name)
-                self._storage[key].add(name)
+                self._storage[key].append(name)
 
     def get(self, name):
         key = self._key(name)
@@ -208,7 +211,7 @@ class DockerMonitor(object):
                         log('Error: %s', e)
 
     def _get_names(self, name, labels):
-        names = [ RE_VALIDNAME.sub('', name).rstrip('.') ]
+        names = []
 
         labels = labels or {}
         instance = int(labels.get('com.docker.compose.container-number', 1))
@@ -216,17 +219,21 @@ class DockerMonitor(object):
         project = labels.get('com.docker.compose.project')
 
         if all((instance, service, project)):
-            names.append('%d.%s.%s' % (instance, service, project))
-
             # the first instance of a service is available without number
-            # prefix
+            # prefix. Report it first.
             if instance == 1:
                 names.append('%s.%s' % (service, project))
 
-        return [ '.'.join((name, self._domain)) for name in names ]
+            names.append('%d.%s.%s' % (instance, service, project))
+
+        names.append(RE_VALIDNAME.sub('', name).rstrip('.'))
+
+        ret = [ '.'.join((name, self._domain)) for name in names ]
+        return ret
 
     def _get_addrs(self, networks):
-        return [ value['IPAddress'] for value in networks.values() ]
+        ret = [ value['IPAddress'] for value in networks.values() ]
+        return ret
 
     def _inspect(self, cid):
         # get full details on this container from docker
